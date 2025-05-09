@@ -1,0 +1,524 @@
+/* app.css - Zenith Whiteboard Styles */
+:root {
+    --font-family-main: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    
+    --primary-color: #0A74DA; /* Strong, modern blue */
+    --primary-hover-color: #085FBA;
+    --primary-disabled-bg-color: #B0CFF2; 
+    --primary-disabled-text-color: #748CAA;
+
+    --secondary-color: #6c757d; /* Neutral grey for secondary actions */
+    --secondary-hover-color: #545b62;
+    --secondary-disabled-bg-color: #C5C9CC;
+    --secondary-disabled-text-color: #888C8F;
+
+    --accent-color: #17A2B8; /* Calming teal/cyan for highlights */
+    
+    --text-color-dark: #212529; /* Near black for primary text */
+    --text-color-medium: #495057; /* Medium grey for secondary text */
+    --text-color-light: #ffffff;
+    --text-color-placeholder: #a0aec0; /* Lighter placeholder for dark inputs */
+
+    --background-body: #F4F7FC; /* Very light blue/grey tint for the page background */
+    --background-content: #FFFFFF; /* White for main content areas like canvas section */
+    --background-toolbar: #FFFFFF; /* Clean white for toolbar */
+    --background-top-bar: #2C3E50; /* Dark, sophisticated color for the top bar */
+    
+    --border-color-light: #E0E0E0; /* Lighter border for subtle divisions */
+    --border-color-medium: #CED4DA; /* Standard border color */
+    --input-border-focus-color: var(--primary-color);
+
+    --canvas-bg-color: #FFFFFF;
+    
+    --button-border-radius: 6px;
+    --input-border-radius: 6px;
+    --toolbar-border-radius: 8px;
+    --container-border-radius: 8px;
+
+    --shadow-sm: 0 2px 4px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 8px rgba(0,0,0,0.08);
+    --shadow-lg: 0 10px 20px rgba(0,0,0,0.1);
+
+    --transition-speed: 0.2s;
+    --primary-color-rgb: 10, 116, 218; /* For rgba() usage, e.g. box-shadow */
+}
+
+/* Global Resets and Base Styles */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    font-family: var(--font-family-main);
+    background-color: var(--background-body);
+    color: var(--text-color-dark);
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden; 
+    font-size: 16px; /* Base font size */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 0;
+    font-weight: 600; /* Slightly bolder headings */
+}
+
+/* Layout Containers */
+.whiteboard-layout-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background-color: var(--background-body);
+}
+
+.top-app-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1.5rem; /* 12px 24px */
+    background-color: var(--background-top-bar);
+    color: var(--text-color-light);
+    flex-shrink: 0;
+    box-shadow: var(--shadow-md);
+    z-index: 100; /* Ensure it's above other content */
+}
+
+.top-app-bar h1 {
+    font-size: 1.5rem; /* 24px */
+    margin: 0;
+    font-weight: 600; /* More prominent title */
+    letter-spacing: 0.5px;
+}
+
+.session-controls-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem; /* 12px */
+    /* Allow this to take up available space if needed, pushing user-controls to the right */
+    flex-grow: 1; 
+    justify-content: center; /* Center session controls if title and user controls are fixed width */
+}
+
+.session-controls-header input[type="text"] {
+    padding: 0.5rem 0.75rem; /* 8px 12px */
+    border: 1px solid var(--border-color-medium);
+    border-radius: var(--input-border-radius);
+    background-color: #4A5A6A; /* Darker input background for contrast on dark bar */
+    color: var(--text-color-light);
+    font-size: 0.9rem; /* 14.4px */
+    transition: border-color var(--transition-speed) ease, box-shadow var(--transition-speed) ease;
+}
+.session-controls-header input[type="text"]::placeholder {
+    color: var(--text-color-placeholder);
+    opacity: 0.8;
+}
+.session-controls-header input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(var(--primary-color-rgb), 0.25); /* Use RGB for alpha */
+}
+
+.session-controls-header .session-id-display {
+    font-size: 0.9rem; /* 14.4px */
+    font-style: italic;
+    color: var(--border-color-light); /* Lighter text for display */
+}
+
+/* User Controls Header (_LoginPartial container in Home.razor) */
+.user-controls-header {
+    display: flex; /* Align items in a row */
+    align-items: center; /* Vertically align items */
+    gap: 0.75rem; /* Space between items if there are multiple direct children */
+    margin-left: 1rem; /* Ensure some space from session controls */
+    flex-shrink: 0; /* Prevent this from shrinking if session controls grow */
+}
+
+/* Reset for ul/li if _LoginPartial uses them (like the second example provided) */
+.user-controls-header ul.navbar-nav {
+    list-style: none;
+    padding-left: 0;
+    margin-bottom: 0; /* Remove default ul margin */
+    display: flex; /* Make li items flow inline */
+    align-items: center;
+    gap: 0.75rem; /* Space between nav items */
+}
+
+.user-controls-header ul.navbar-nav .nav-item {
+    display: flex; /* Ensure form inside li also aligns well */
+    align-items: center;
+}
+
+/* General styling for links and form buttons within user controls in Home.razor's top-app-bar */
+.user-controls-header a,
+.user-controls-header .nav-link, 
+.user-controls-header form button, 
+.user-controls-header form button.nav-link {
+    color: var(--text-color-light) !important; 
+    text-decoration: none;
+    font-size: 0.9rem; 
+    padding: 0.4rem 0.8rem; 
+    background-color: transparent;
+    border: 1px solid transparent; 
+    border-radius: var(--button-border-radius);
+    transition: background-color var(--transition-speed) ease, 
+                color var(--transition-speed) ease,
+                border-color var(--transition-speed) ease;
+    display: inline-flex; 
+    align-items: center;
+    line-height: 1.2; 
+    cursor: pointer; 
+}
+
+.user-controls-header a:hover,
+.user-controls-header .nav-link:hover,
+.user-controls-header form button:hover,
+.user-controls-header form button.nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.1); 
+    color: var(--text-color-light) !important;
+    text-decoration: none; 
+}
+
+.user-controls-header form.form-inline,
+.user-controls-header form { 
+    margin-bottom: 0; 
+    display: flex; 
+    align-items: center;
+}
+
+.user-controls-header form button.btn.btn-link {
+    border: 1px solid transparent; 
+}
+.user-controls-header form button.btn.btn-link:focus,
+.user-controls-header form button.btn.btn-link:active {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Styling for MainLayout.razor's .top-row (if it's different from top-app-bar) */
+/* This targets the HTML snippet you provided: <div class="top-row px-4">...</div> */
+/* Assuming this .top-row is also intended to be dark or needs to blend with a dark theme */
+.page > main > .top-row.px-4 { /* More specific selector for MainLayout's top-row */
+    background-color: var(--background-top-bar); /* Match the app bar background */
+    color: var(--text-color-light);
+    padding: 0.5rem 1rem; /* Adjust padding as needed */
+    display: flex;
+    justify-content: flex-end; /* Align items to the right by default */
+    align-items: center;
+    gap: 1rem; /* Space between links */
+    border-bottom: 1px solid #495057; /* Optional: if it's a standalone bar */
+}
+
+.page > main > .top-row.px-4 a,
+.page > main > .top-row.px-4 .nav-link, /* If _LoginPartial is used here */
+.page > main > .top-row.px-4 form button.nav-link { /* If _LoginPartial form is used here */
+    color: var(--text-color-light) !important;
+    text-decoration: none;
+    font-size: 0.9rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: var(--button-border-radius);
+    transition: background-color var(--transition-speed) ease;
+}
+
+.page > main > .top-row.px-4 a:hover,
+.page > main > .top-row.px-4 .nav-link:hover,
+.page > main > .top-row.px-4 form button.nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    text-decoration: none;
+}
+
+/* If _LoginPartial inside .top-row.px-4 uses ul/li structure */
+.page > main > .top-row.px-4 ul.navbar-nav {
+    list-style: none;
+    padding-left: 0;
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 1rem; /* Match the gap of the parent .top-row.px-4 */
+}
+.page > main > .top-row.px-4 ul.navbar-nav .nav-item {
+    display: flex;
+    align-items: center;
+}
+
+
+/* General Button Styles (for main app buttons, not necessarily nav links) */
+button {
+    padding: 0.6rem 1rem; 
+    border-radius: var(--button-border-radius);
+    border: none;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem; 
+    transition: background-color var(--transition-speed) ease-in-out, 
+                border-color var(--transition-speed) ease-in-out, 
+                transform var(--transition-speed) ease,
+                box-shadow var(--transition-speed) ease;
+    text-align: center;
+}
+button:not(.nav-link):not(.tool-button):hover { 
+    transform: translateY(-1px); 
+    box-shadow: var(--shadow-sm);
+}
+button:not(.nav-link):not(.tool-button):active {
+    transform: translateY(0px);
+    box-shadow: none;
+}
+button:disabled, button[disabled] { 
+    cursor: not-allowed !important;
+    transform: none !important;
+    box-shadow: none !important;
+    opacity: 0.7 !important;
+}
+
+.btn-primary-action {
+    background-color: var(--primary-color);
+    color: var(--text-color-light);
+}
+.btn-primary-action:hover:not(:disabled) {
+    background-color: var(--primary-hover-color);
+}
+.btn-primary-action:disabled, .btn-primary-action[disabled] {
+    background-color: var(--primary-disabled-bg-color) !important;
+    color: var(--primary-disabled-text-color) !important;
+}
+
+.btn-secondary-action {
+    background-color: var(--secondary-color);
+    color: var(--text-color-light);
+}
+.btn-secondary-action:hover:not(:disabled) {
+    background-color: var(--secondary-hover-color);
+}
+.btn-secondary-action:disabled, .btn-secondary-action[disabled] {
+    background-color: var(--secondary-disabled-bg-color) !important;
+    color: var(--secondary-disabled-text-color) !important;
+}
+
+
+.main-content-area {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden; 
+}
+
+.vertical-toolbar {
+    width: 70px; 
+    padding: 1rem 0.5rem; 
+    background-color: var(--background-toolbar);
+    border-right: 1px solid var(--border-color-light);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem; 
+    align-items: center; 
+    flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
+    overflow-y: auto; 
+}
+
+.tool-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem; 
+    width: 100%;
+    align-items: center;
+}
+
+.tool-button {
+    width: 48px; 
+    height: 48px;
+    padding: 0; 
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: transparent;
+    color: var(--text-color-medium);
+    border: 1px solid transparent; 
+    border-radius: var(--button-border-radius);
+    font-size: 1.5rem; 
+    line-height: 1;
+}
+.tool-button:hover:not(:disabled) {
+    background-color: var(--background-body); 
+    color: var(--primary-color);
+    border-color: var(--border-color-light);
+}
+.tool-button.active {
+    background-color: var(--primary-color);
+    color: var(--text-color-light);
+    border-color: var(--primary-color);
+}
+.tool-button.active:hover:not(:disabled) {
+    background-color: var(--primary-hover-color);
+    border-color: var(--primary-hover-color);
+}
+.tool-button:disabled, .tool-button[disabled] {
+    color: var(--border-color-medium) !important;
+    background-color: transparent !important;
+}
+
+.tool-options {
+    width: 100%;
+    padding: 0 0.25rem; 
+}
+.tool-options label {
+    font-size: 0.75rem; 
+    color: var(--text-color-medium);
+    display: block;
+    margin-bottom: 0.25rem; 
+    text-align: center;
+}
+.tool-options input[type="color"] {
+    width: 100%;
+    height: 36px; 
+    border: 1px solid var(--border-color-light);
+    border-radius: var(--input-border-radius);
+    padding: 2px; 
+    cursor: pointer;
+}
+.tool-options input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+.tool-options input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 4px;
+}
+
+.tool-options input[type="range"] {
+    width: 100%;
+    cursor: pointer;
+    margin-top: 0.25rem; 
+}
+
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    height: 16px; 
+}
+input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    background: var(--border-color-medium);
+    border-radius: 3px;
+}
+input[type="range"]::-moz-range-track {
+    height: 6px;
+    background: var(--border-color-medium);
+    border-radius: 3px;
+}
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    margin-top: -5px; 
+    background-color: var(--primary-color);
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--background-toolbar); 
+    box-shadow: var(--shadow-sm);
+}
+input[type="range"]::-moz-range-thumb {
+    background-color: var(--primary-color);
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--background-toolbar);
+    box-shadow: var(--shadow-sm);
+}
+
+
+.canvas-section {
+    flex-grow: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem; 
+    background-color: var(--background-body); 
+    overflow: auto; 
+}
+
+.canvas-container {
+    position: relative; 
+    border: 1px solid var(--border-color-medium);
+    box-shadow: var(--shadow-lg); 
+    border-radius: var(--container-border-radius); 
+    overflow: hidden; 
+}
+
+#whiteboardCanvas {
+    background-color: var(--canvas-bg-color);
+    display: block; 
+    border-radius: var(--container-border-radius); 
+}
+
+#cursorCanvas {
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: var(--container-border-radius); 
+}
+
+/* Tool-specific cursors for the canvas container */
+.canvas-container.tool-pen { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%230A74DA' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 19l7-7 3 3-7 7-3-3z'></path><path d='M18 13l-1.5-1.5M12 19l-4-4'></path></svg>") 4 20, crosshair; }
+.canvas-container.tool-line { cursor: crosshair; }
+.canvas-container.tool-rectangle { cursor: crosshair; }
+.canvas-container.tool-circle { cursor: crosshair; }
+.canvas-container.tool-eraser { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%237F8C8D' stroke='%23FFFFFF' stroke-width='1'><rect x='4' y='8' width='16' height='8' rx='1'/><path d='M6 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2'/><path d='M10 12h4'/></svg>") 12 12, cell; }
+
+
+.session-prompt {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 2rem; 
+    background-color: var(--background-content);
+}
+
+.session-prompt h2 {
+    font-size: 2rem; 
+    color: var(--text-color-dark);
+    margin-bottom: 1rem; 
+    font-weight: 600;
+}
+
+.session-prompt p {
+    font-size: 1.125rem; 
+    color: var(--text-color-medium);
+    margin-bottom: 1.5rem; 
+    max-width: 500px;
+    line-height: 1.6;
+}
+
+/* Blazor Error UI - Keep existing */
+#blazor-error-ui {
+    color-scheme: light only;
+    background: lightyellow;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}
+
+.content.px-4 { /* From MainLayout, parent of Home.razor content */
+    flex-grow: 1;
+    padding: 0 !important; /* Remove padding if Home.razor manages its own layout fully */
+    display: flex; 
+    flex-direction: column;
+}

@@ -1,0 +1,24 @@
+﻿@inherits LayoutComponentBase
+
+<div class="page">
+    <div class="sidebar">
+        @* <NavMenu /> *@ @* Commented out as NavMenu.razor does not exist in this empty template *@
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            @* <_LoginPartial /> *@
+            <a href="https://www.linkedin.com/in/mohamed-al-balkhi/" target="_blank">Contact Mohamed</a>
+        </div>
+
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>

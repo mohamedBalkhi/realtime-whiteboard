@@ -1,0 +1,649 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+@* @using Microsoft.AspNetCore.Components.Authorization *@
+@* @using Microsoft.AspNetCore.Identity *@
+@using Microsoft.AspNetCore.SignalR.Client
+@using RealtimeWhiteboard.Hubs
+@using System.Timers
+
+<PageTitle>Zenith Whiteboard</PageTitle>
+
+<div class="whiteboard-layout-container">
+    <header class="top-app-bar">
+        <h1>Zenith Whiteboard</h1>
+        <div class="session-controls-header">
+            @if (string.IsNullOrEmpty(currentSessionId) || !isSessionActive)
+            {
+                
+            }
+            else
+            {
+                <span class="session-id-display">Session: @currentSessionId</span>
+                <button class="btn-secondary-action" @onclick="HandleLeaveSession">Leave Session</button>
+            }
+        </div>
+      
+    </header>
+
+    <div class="main-content-area">
+        @if (isSessionActive)
+        {
+            <aside class="vertical-toolbar">
+                <div class="tool-group">
+                    <button class="tool-button" @onclick="HandleUndo" disabled="@(!canUndo)" title="Undo">↩️</button>
+                    <button class="tool-button" @onclick="HandleRedo" disabled="@(!canRedo)" title="Redo">↪️</button>
+                </div>
+                <div class="tool-group">
+                    <button @onclick='() => SetTool("pen")' class="tool-button @(currentTool == "pen" ? "active" : "")" title="Pen">✏️</button>
+                    <button @onclick='() => SetTool("line")' class="tool-button @(currentTool == "line" ? "active" : "")" title="Line">📏</button>
+                    <button @onclick='() => SetTool("rectangle")' class="tool-button @(currentTool == "rectangle" ? "active" : "")" title="Rectangle">🖼️</button>
+                    <button @onclick='() => SetTool("circle")' class="tool-button @(currentTool == "circle" ? "active" : "")" title="Circle">⭕</button>
+                    <button @onclick='() => SetTool("eraser")' class="tool-button @(currentTool == "eraser" ? "active" : "")" title="Eraser">🧼</button>
+                </div>
+                <div class="tool-group tool-options">
+                    <label for="lineColor" title="Select Color">Color</label>
+                    <input type="color" id="lineColor" @bind="CurrentColor" />
+                    
+                    <label for="lineWidth" title="Line Width">Width: @CurrentLineWidth</label>
+                    <input type="range" id="lineWidth" @bind="CurrentLineWidth" min="1" max="100" />
+                </div>
+            </aside>
+
+            <section class="canvas-section">
+                @* The tool-specific class is for cursor styling *@
+                <div class="canvas-container tool-@(currentTool.ToLowerInvariant())" style="width: @(canvasWidth)px; height: @(canvasHeight)px;">
+                    <canvas id="whiteboardCanvas" @ref="canvasElement" 
+                            width="@canvasWidth" height="@canvasHeight"></canvas>
+                    <canvas id="cursorCanvas" @ref="cursorCanvasElement" 
+                            width="@canvasWidth" height="@canvasHeight"
+                            style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+                </div>
+            </section>
+        }
+        else
+        {
+            <div class="session-prompt">
+                <h2>Welcome to Zenith Whiteboard!</h2>
+                <p>Create a new session to start drawing, or join an existing one using a Session ID.</p>
+                <div class="session-controls-header" style="justify-content: center;">
+                     <input type="text" @bind="SessionIdToJoinInput" @bind:event="oninput" placeholder="Enter Session ID" />
+                     <button class="btn-primary-action" @onclick="HandleJoinSession" disabled="@IsJoinButtonDisabled">Join Session</button>
+                     <span style="margin: 0 0.5rem;">OR</span>
+                     <button class="btn-secondary-action" @onclick="HandleCreateSession">Create New Session</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private ElementReference canvasElement;
+    private ElementReference cursorCanvasElement;
+    private IJSObjectReference? module;
+    private DotNetObjectReference<Home>? dotNetHelper;
+    private HubConnection? hubConnection;
+    private (double X, double Y)? lastMousePosition;
+    private (double X, double Y)? currentMousePositionForCursorSend; // Separate variable for throttled sending
+    private bool canvasJsInitialized = false;
+
+    private int canvasWidth = 1600; 
+    private int canvasHeight = 900; 
+    private bool isConnected => hubConnection?.State == HubConnectionState.Connected;
+    
+    private string? currentSessionId = null;
+    private string _sessionIdToJoinField = string.Empty;
+    private string SessionIdToJoinInput
+    {
+        get => _sessionIdToJoinField;
+        set
+        {
+            if (_sessionIdToJoinField != value)
+            {
+                _sessionIdToJoinField = value;
+                InvokeAsync(StateHasChanged); 
+            }
+        }
+    }
+    private bool IsJoinButtonDisabled => string.IsNullOrWhiteSpace(_sessionIdToJoinField); 
+
+    private bool isSessionActive = false;
+
+    private string currentTool = "pen";
+    private string _currentColor = "#0A74DA"; 
+    private string CurrentColor {
+        get => _currentColor;
+        set {
+            if (_currentColor != value && isSessionActive) {
+                _currentColor = value;
+                if (module != null && canvasJsInitialized) { 
+                    module.InvokeVoidAsync("updateDrawingSettings", _currentColor, CurrentLineWidth);
+                }
+            }
+        }
+    }
+
+    private double _currentLineWidth = 5; 
+    private double CurrentLineWidth {
+        get => _currentLineWidth;
+        set {
+            if (_currentLineWidth != value && isSessionActive) {
+                _currentLineWidth = value;
+                 if (module != null && canvasJsInitialized) { 
+                    module.InvokeVoidAsync("updateDrawingSettings", CurrentColor, _currentLineWidth);
+                }
+                InvokeAsync(StateHasChanged); 
+            }
+        }
+    }
+
+    private bool canUndo = false;
+    private bool canRedo = false;
+    private bool isUndoInProgress = false;
+
+    private List<DrawingAction>? _pendingHistory = null;
+    private bool? _pendingCanUndo = null;
+    private bool? _pendingCanRedo = null;
+    private bool _hasProcessedPendingHistorySinceLastReceive = false;
+
+    private readonly string _componentInstanceId = Guid.NewGuid().ToString("N").Substring(0, 8); 
+    
+    private Dictionary<int, DateTime> _recentlyProcessedMessageMarkers = new Dictionary<int, DateTime>();
+    private const int MessageMarkerCacheDurationSeconds = 10; 
+    private const int MaxMessageMarkersToTrack = 50; 
+
+    // For throttling cursor position updates
+    private System.Timers.Timer? _cursorThrottleTimer;
+    private const double CursorThrottleIntervalMilliseconds = 50; // Send updates at most ~20fps (1000/50)
+    private bool _isCursorMovePendingSend = false;
+
+
+    public record PointData(double X, double Y);
+    
+    private async Task SetTool(string tool) { 
+        if (!isSessionActive) return;
+        currentTool = tool;
+        if (module != null && canvasJsInitialized) { 
+            await module.InvokeVoidAsync("setCurrentToolJs", tool);
+        }
+    }
+
+    private async Task ClearCanvasLocalAndJs() { 
+        Console.WriteLine($"CLIENT ({_componentInstanceId}): ClearCanvasLocalAndJs called.");
+        if (module != null && canvasJsInitialized) {
+            await module.InvokeVoidAsync("clearCanvas");
+            await module.InvokeVoidAsync("clearCursorCanvas");
+        }
+    }
+
+    private void ClearMessageMarkers()
+    {
+        _recentlyProcessedMessageMarkers.Clear();
+    }
+
+    private bool WasMessageRecentlyProcessed(int actionId, string messageTypeForLog)
+    {
+        if (_recentlyProcessedMessageMarkers.TryGetValue(actionId, out DateTime lastProcessedTime))
+        {
+            if ((DateTime.UtcNow - lastProcessedTime).TotalSeconds < MessageMarkerCacheDurationSeconds)
+            {
+                Console.WriteLine($"CLIENT ({_componentInstanceId}): {messageTypeForLog} ID: {actionId} - Message marker found, recently processed. SKIPPING this specific message instance.");
+                return true; 
+            }
+            else
+            {
+                _recentlyProcessedMessageMarkers.Remove(actionId);
+                return false;
+            }
+        }
+        return false; 
+    }
+
+    private void MarkMessageAsProcessed(int actionId)
+    {
+        if (_recentlyProcessedMessageMarkers.Count >= MaxMessageMarkersToTrack)
+        {
+            var oldestEntry = _recentlyProcessedMessageMarkers.OrderBy(kvp => kvp.Value).First();
+            _recentlyProcessedMessageMarkers.Remove(oldestEntry.Key);
+        }
+        _recentlyProcessedMessageMarkers[actionId] = DateTime.UtcNow;
+    }
+
+    private async Task UpdateUndoRedoState(bool newCanUndo, bool newCanRedo)
+    {
+        bool stateChanged = false;
+        if (canUndo != newCanUndo)
+        {
+            canUndo = newCanUndo;
+            stateChanged = true;
+        }
+        if (canRedo != newCanRedo)
+        {
+            canRedo = newCanRedo;
+            stateChanged = true;
+        }
+        if (stateChanged)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task HandleCreateSession() {
+        Console.WriteLine($"CLIENT ({_componentInstanceId}): HandleCreateSession - Attempting to create session.");
+        if (hubConnection == null) return;
+        if (!isConnected) {
+            try {
+                await hubConnection.StartAsync();
+                if (!isConnected) return;
+            } catch (Exception ex_connect) {
+                 Console.WriteLine($"CLIENT ({_componentInstanceId}): HandleCreateSession - Error starting hub connection: {ex_connect.Message}");
+                 return;
+            }
+        }
+        
+        if (isSessionActive && module != null && canvasJsInitialized) {
+             await ClearCanvasLocalAndJs();
+        }
+
+        try {
+            currentSessionId = await hubConnection.InvokeAsync<string>("CreateSession");
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Session created with ID: {currentSessionId}");
+            isSessionActive = true;
+            SessionIdToJoinInput = string.Empty; 
+            canvasJsInitialized = false; 
+            await UpdateUndoRedoState(false, false);
+            _pendingHistory = null; 
+            ClearMessageMarkers(); 
+            await InvokeAsync(StateHasChanged); // For overall UI change (session active)
+        } catch (Exception ex) {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Error invoking CreateSession on hub: {ex.Message}");
+        }
+    }
+
+    private async Task HandleJoinSession() {
+        Console.WriteLine($"CLIENT ({_componentInstanceId}): HandleJoinSession - Attempting to join session.");
+        if (hubConnection == null || string.IsNullOrWhiteSpace(_sessionIdToJoinField)) return;
+        
+        if (!isConnected) {
+             try {
+                await hubConnection.StartAsync();
+                 if (!isConnected) return;
+            } catch (Exception ex_connect) {
+                 Console.WriteLine($"CLIENT ({_componentInstanceId}): HandleJoinSession - Error starting hub connection: {ex_connect.Message}");
+                 return;
+            }
+        }
+
+        if (isSessionActive && module != null && canvasJsInitialized) {
+            await ClearCanvasLocalAndJs();
+        }
+        
+        try {
+            await hubConnection.InvokeAsync("JoinSession", _sessionIdToJoinField);
+            currentSessionId = _sessionIdToJoinField; 
+            isSessionActive = true;
+            canvasJsInitialized = false; 
+            _sessionIdToJoinField = string.Empty; 
+            await UpdateUndoRedoState(false, false);
+            _pendingHistory = null; 
+            ClearMessageMarkers();
+            await InvokeAsync(StateHasChanged); // For overall UI change
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Attempted to join session: {currentSessionId}. Waiting for history.");
+        } catch (Exception ex) {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Error invoking JoinSession on hub: {ex.Message}");
+            currentSessionId = null; 
+            isSessionActive = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task HandleLeaveSession() {
+        if (hubConnection == null || !isConnected || string.IsNullOrEmpty(currentSessionId)) return;
+        
+        isUndoInProgress = false; 
+        await hubConnection.InvokeAsync("LeaveSession", currentSessionId);
+        Console.WriteLine($"CLIENT ({_componentInstanceId}): Explicitly left session: {currentSessionId}");
+        
+        if (module != null && canvasJsInitialized) {
+             await ClearCanvasLocalAndJs();
+        }
+        currentSessionId = null;
+        isSessionActive = false;
+        canvasJsInitialized = false; 
+        await UpdateUndoRedoState(false, false);
+        _pendingHistory = null; 
+        ClearMessageMarkers();
+        await InvokeAsync(StateHasChanged); // For overall UI change
+    }
+
+    private async Task HandleUndo() {
+        if (hubConnection != null && isConnected && !string.IsNullOrEmpty(currentSessionId) && canUndo && !isUndoInProgress) {
+            isUndoInProgress = true; 
+            // StateHasChanged for isUndoInProgress might be useful if UI reflects this (e.g., disabling undo button)
+            // await InvokeAsync(StateHasChanged); 
+            await hubConnection.InvokeAsync("Undo", currentSessionId);
+        }
+    }
+
+    private async Task HandleRedo() {
+        if (hubConnection != null && isConnected && !string.IsNullOrEmpty(currentSessionId) && canRedo) { 
+            await hubConnection.InvokeAsync("Redo", currentSessionId);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        dotNetHelper = DotNetObjectReference.Create(this); 
+        Console.WriteLine($"CLIENT ({_componentInstanceId}): OnInitializedAsync. DotNetHelper created.");
+
+        _cursorThrottleTimer = new System.Timers.Timer(CursorThrottleIntervalMilliseconds);
+        _cursorThrottleTimer.Elapsed += async (sender, e) => await SendThrottledCursorPositionAsync();
+        _cursorThrottleTimer.AutoReset = true; // Keep timer running
+        // _cursorThrottleTimer.Start(); // Start it once JS is initialized and session is active
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/whiteboardhub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<List<DrawingAction>, bool, bool>("ReceiveSessionHistory", async (history, serverCanUndo, serverCanRedo) => 
+        {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): ReceiveSessionHistory. Count: {history.Count}, ServerCanUndo: {serverCanUndo}, ServerCanRedo: {serverCanRedo}");
+            if (!isSessionActive && !string.IsNullOrEmpty(currentSessionId)) { 
+                isSessionActive = true;
+            }
+            _pendingHistory = history; 
+            _pendingCanUndo = serverCanUndo; // Store pending state
+            _pendingCanRedo = serverCanRedo; // Store pending state
+            _hasProcessedPendingHistorySinceLastReceive = false; 
+            ClearMessageMarkers(); 
+            await InvokeAsync(StateHasChanged); // For overall UI change (session active / pending history)
+        });
+
+        hubConnection.On<DrawingAction, bool, bool>("ReceiveDrawingAction", async (action, serverCanUndo, serverCanRedo) =>
+        {
+            if (WasMessageRecentlyProcessed(action.Id, "ReceiveDrawingAction"))
+            {
+                await UpdateUndoRedoState(serverCanUndo, serverCanRedo);
+                return; 
+            }
+            MarkMessageAsProcessed(action.Id);
+
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Processing ReceiveDrawingAction - ID: {action.Id}, Type: {action.Type}");
+            if (action.SessionId == currentSessionId && module != null && isSessionActive && canvasJsInitialized) 
+            {
+                await module.InvokeVoidAsync("drawRemoteAction", action); 
+                await UpdateUndoRedoState(serverCanUndo, serverCanRedo);
+            }
+        });
+
+        hubConnection.On<DrawingAction, bool, bool>("ReceiveRedoneAction", async (action, serverCanUndo, serverCanRedo) =>
+        {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Processing ReceiveRedoneAction - ID: {action.Id}, Type: {action.Type}");
+            if (action.SessionId == currentSessionId && module != null && isSessionActive && canvasJsInitialized) 
+            {
+                await module.InvokeVoidAsync("drawRemoteAction", action); 
+                await UpdateUndoRedoState(serverCanUndo, serverCanRedo);
+            }
+        });
+
+        hubConnection.On<int, bool, bool>("ActionUndone", async (actionId, serverCanUndo, serverCanRedo) => 
+        {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Processing ActionUndone - ActionID: {actionId}");
+            if (module != null && canvasJsInitialized && isSessionActive) { 
+                await module.InvokeVoidAsync("undoActionById", actionId);
+                isUndoInProgress = false; 
+                await UpdateUndoRedoState(serverCanUndo, serverCanRedo);
+            }
+        });
+
+        hubConnection.On<CursorPosition>("ReceiveCursorPosition", async (cursorPos) => 
+        {
+            if (module != null && isSessionActive && canvasJsInitialized) { 
+                if (hubConnection?.ConnectionId != cursorPos.ConnectionId) { // Check hubConnection null before access
+                     await module.InvokeVoidAsync("updateRemoteCursor", cursorPos.ConnectionId, cursorPos.X, cursorPos.Y);
+                }
+            }
+        });
+
+        try
+        {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): SignalR Hub Connection configured. Will connect on session action.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Error configuring SignalR connection: {ex.Message}");
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (firstRender) {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): OnAfterRenderAsync - firstRender");
+            try {
+                module = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                    "import", "./js/canvasInterop.js"); 
+                Console.WriteLine($"CLIENT ({_componentInstanceId}): JS module imported successfully.");
+            } catch (Exception ex) {
+                Console.WriteLine($"CLIENT ({_componentInstanceId}): ERROR importing JS module: {ex.Message}");
+            }
+        }
+
+        bool stateActuallyChangedThisRender = false;
+
+        if (isSessionActive && module != null && !canvasJsInitialized)
+        {
+            if (!string.IsNullOrEmpty(canvasElement.Id) && !string.IsNullOrEmpty(cursorCanvasElement.Id)) {
+                 try {
+                    Console.WriteLine($"CLIENT ({_componentInstanceId}): Attempting to initializeCanvasAndCursors. canvasJsInitialized: {canvasJsInitialized}");
+                    await module.InvokeVoidAsync("initializeCanvasAndCursors", canvasElement, cursorCanvasElement, dotNetHelper, canvasWidth, canvasHeight, CurrentColor, CurrentLineWidth);
+                    canvasJsInitialized = true; 
+                    await module.InvokeVoidAsync("setCurrentToolJs", currentTool); 
+                    _cursorThrottleTimer?.Start(); // Start cursor throttle timer now that JS is ready
+                    Console.WriteLine($"CLIENT ({_componentInstanceId}): Canvas and Cursor systems JS initialized/re-initialized for session. Cursor throttle timer started.");
+                    stateActuallyChangedThisRender = true; // canvasJsInitialized changed
+                } catch (Exception ex) {
+                    Console.WriteLine($"CLIENT ({_componentInstanceId}): ERROR initializing canvas/cursors via JS: {ex.Message}");
+                    canvasJsInitialized = false; 
+                    _cursorThrottleTimer?.Stop();
+                }
+            } else {
+                Console.WriteLine($"CLIENT ({_componentInstanceId}): Canvas elements not ready yet for JS initialization (isSessionActive: {isSessionActive}, module: {(module != null)}, canvasJsInitialized: {canvasJsInitialized}).");
+            }
+        } else if (!isSessionActive && canvasJsInitialized) {
+            // If session becomes inactive, stop the timer and mark canvasJS as uninitialized
+            _cursorThrottleTimer?.Stop();
+            canvasJsInitialized = false; // Reflect that JS interop for canvas is no longer "active"
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): Session became inactive. Cursor throttle timer stopped. canvasJsInitialized set to false.");
+            stateActuallyChangedThisRender = true;
+        }
+
+
+        if (module != null && canvasJsInitialized && _pendingHistory != null && !_hasProcessedPendingHistorySinceLastReceive)
+        {
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): OnAfterRenderAsync - Processing pending history. Count: {_pendingHistory.Count}");
+            _hasProcessedPendingHistorySinceLastReceive = true; 
+            
+            if (module != null && canvasJsInitialized) 
+            {
+                 await module.InvokeVoidAsync("processInitialHistory", _pendingHistory); 
+                 Console.WriteLine($"CLIENT ({_componentInstanceId}): OnAfterRenderAsync - Called JS processInitialHistory with {_pendingHistory.Count} actions.");
+            }
+            
+            // Update canUndo/canRedo based on the processed history
+            bool actualCanUndo = _pendingCanUndo ?? false;
+            bool actualCanRedo = _pendingCanRedo ?? false;
+            if (canUndo != actualCanUndo || canRedo != actualCanRedo) {
+                canUndo = actualCanUndo;
+                canRedo = actualCanRedo;
+                stateActuallyChangedThisRender = true;
+            }
+            isUndoInProgress = false; 
+            
+            _pendingHistory = null; 
+            _pendingCanUndo = null;
+            _pendingCanRedo = null;
+            // stateActuallyChangedThisRender is already true if we entered this block due to _pendingHistory
+        }
+
+        if (stateActuallyChangedThisRender) {
+            await InvokeAsync(StateHasChanged); 
+        }
+    }
+
+    [JSInvokable]
+    public Task OnMouseDown(double x, double y) {
+        if (!isSessionActive || string.IsNullOrEmpty(currentSessionId) || !canvasJsInitialized) return Task.CompletedTask;
+        lastMousePosition = (x, y);
+        // currentMousePositionForCursorSend = (x,y); // Update immediately on mousedown for responsiveness
+        // _isCursorMovePendingSend = true;
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnMouseMoveForCursor(double x, double y) { // Renamed from OnMouseMove
+        if (!isSessionActive || string.IsNullOrEmpty(currentSessionId) || !canvasJsInitialized) return Task.CompletedTask;
+        
+        currentMousePositionForCursorSend = (x,y);
+        _isCursorMovePendingSend = true; 
+        // The actual sending is handled by the _cursorThrottleTimer
+        return Task.CompletedTask;
+    }
+
+    private async Task SendThrottledCursorPositionAsync()
+    {
+        if (_isCursorMovePendingSend && isSessionActive && isConnected && hubConnection != null && currentSessionId != null && currentMousePositionForCursorSend.HasValue)
+        {
+            _isCursorMovePendingSend = false; // Reset flag
+            try
+            {
+                await hubConnection.SendAsync("SendCursorPosition", currentSessionId, currentMousePositionForCursorSend.Value.X, currentMousePositionForCursorSend.Value.Y);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"CLIENT ({_componentInstanceId}): Error sending throttled cursor position: {ex.Message}");
+                // Potentially stop timer or handle error if connection is consistently failing
+            }
+        }
+    }
+
+
+    [JSInvokable]
+    public async Task OnMouseUp(double x, double y) {
+        if (!isSessionActive || string.IsNullOrEmpty(currentSessionId) || !lastMousePosition.HasValue || !canvasJsInitialized) return;
+        
+        // Stop any pending cursor send as mouse is up
+        _isCursorMovePendingSend = false;
+
+        if (currentTool == "pen" || currentTool == "eraser") {
+            lastMousePosition = null;
+            // currentMousePositionForCursorSend = null; // Not strictly needed to null here
+            return; 
+        }
+        
+        string actionType = currentTool;
+        if (currentTool == "line" || currentTool == "rectangle" || currentTool == "circle") {
+             if (hubConnection != null && isConnected && lastMousePosition.HasValue) { 
+                await hubConnection.SendAsync("SendDrawingAction", new {
+                    SessionId = currentSessionId!,
+                    Type = actionType,
+                    X1 = lastMousePosition.Value.X,
+                    Y1 = lastMousePosition.Value.Y,
+                    X2 = x,
+                    Y2 = y,
+                    Color = CurrentColor,
+                    LineWidth = CurrentLineWidth,
+                    StrokeDataJson = (string?)null 
+                });
+             }
+        }
+        lastMousePosition = null;
+        // currentMousePositionForCursorSend = null;
+    }
+
+    [JSInvokable]
+    public async Task OnPenStrokeCompleted(List<PointData> points) {
+        if (!isSessionActive || string.IsNullOrEmpty(currentSessionId) || points == null || !points.Any() || !canvasJsInitialized) return;
+
+        string strokeDataJson = System.Text.Json.JsonSerializer.Serialize(points);
+        double x1 = points.First().X;
+        double y1 = points.First().Y;
+        double x2 = points.Last().X;
+        double y2 = points.Last().Y;
+
+        if (isConnected && hubConnection != null) {
+            await hubConnection.SendAsync("SendDrawingAction", new {
+                SessionId = currentSessionId!,
+                Type = "pen-stroke",
+                X1 = x1,
+                Y1 = y1,
+                X2 = x2,
+                Y2 = y2,
+                Color = CurrentColor,
+                LineWidth = CurrentLineWidth,
+                StrokeDataJson = strokeDataJson
+            });
+        }
+        lastMousePosition = null;
+        // currentMousePositionForCursorSend = null;
+    }
+
+    [JSInvokable]
+    public async Task OnEraserStrokeCompleted(List<PointData> points) {
+        if (!isSessionActive || string.IsNullOrEmpty(currentSessionId) || points == null || !points.Any() || !canvasJsInitialized) return;
+
+        string strokeDataJson = System.Text.Json.JsonSerializer.Serialize(points);
+        double x1 = points.First().X;
+        double y1 = points.First().Y;
+        double x2 = points.Last().X;
+        double y2 = points.Last().Y;
+
+        if (isConnected && hubConnection != null) {
+            await hubConnection.SendAsync("SendDrawingAction", new {
+                SessionId = currentSessionId!,
+                Type = "eraser-stroke",
+                X1 = x1,
+                Y1 = y1,
+                X2 = x2,
+                Y2 = y2,
+                Color = "#FFFFFF", 
+                LineWidth = CurrentLineWidth,
+                StrokeDataJson = strokeDataJson
+            });
+        }
+        lastMousePosition = null; 
+        // currentMousePositionForCursorSend = null;
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync() {
+        Console.WriteLine($"CLIENT ({_componentInstanceId}): DisposeAsync called.");
+        _cursorThrottleTimer?.Stop();
+        _cursorThrottleTimer?.Dispose();
+        _cursorThrottleTimer = null;
+
+        if (hubConnection != null) {
+             if (!string.IsNullOrEmpty(currentSessionId) && hubConnection.State == HubConnectionState.Connected) {
+               try { 
+                    Console.WriteLine($"CLIENT ({_componentInstanceId}): Attempting to leave session {currentSessionId} during dispose.");
+                    await hubConnection.InvokeAsync("LeaveSession", currentSessionId); 
+               } catch (Exception ex) {
+                    Console.WriteLine($"CLIENT ({_componentInstanceId}): Error leaving session during dispose: {ex.Message}");
+               }
+            }
+            await hubConnection.DisposeAsync();
+            hubConnection = null; 
+            Console.WriteLine($"CLIENT ({_componentInstanceId}): HubConnection disposed.");
+        }
+        dotNetHelper?.Dispose();
+        if (module != null) {
+            try { 
+                await module.DisposeAsync(); 
+                Console.WriteLine($"CLIENT ({_componentInstanceId}): JS Module disposed.");
+            } catch (Exception ex) {
+                 Console.WriteLine($"CLIENT ({_componentInstanceId}): Error disposing JS module: {ex.Message}");
+            }
+            module = null;
+        }
+    }
+}

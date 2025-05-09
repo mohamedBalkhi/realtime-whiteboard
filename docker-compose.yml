@@ -1,0 +1,16 @@
+
+services:
+  db:
+    image: postgres:latest
+    container_name: whiteboard_postgres_db
+    environment:
+      POSTGRES_DB: whiteboard_db
+      POSTGRES_USER: whiteboard_user
+      POSTGRES_PASSWORD: whiteboard_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data: 
